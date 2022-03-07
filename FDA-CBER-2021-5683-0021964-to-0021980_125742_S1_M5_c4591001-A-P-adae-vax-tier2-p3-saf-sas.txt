@@ -1,0 +1,819 @@
+***********************************************************************************************;
+**  Program Name    :  adae-vax-tier2-p3-saf.sas                                             **;
+**  Date Created    :  22Mar2021                                                             **;
+**  Programmer Name :  LIL233                                                                **;
+**  Purpose         :  Create adae-vax-tier2-p3-saf                                          **;
+**  Input data      :  adae                                                                  **;
+**  Output data     :  adae-vax-tier2-p3-saf.html                                            **;
+***********************************************************************************************;
+options mprint mlogic symbolgen mprint symbolgen mlogic nocenter missing=" ";
+
+**Setup the environment**;
+%let prot=/Volumes/app/cdars/prod/sites/cdars4/prjC459/nda2_unblinded_esub/bla_esub_adam/saseng/cdisc3_0;
+libname datvprot "&prot./data_vai" access=readonly;
+
+%let codename=adae-vax-tier2-p3-saf;
+%let outlog=&prot./analysis/esub/logs/&codename..log;
+%let outtable=&prot./analysis/esub/output/&codename..html;
+
+proc printto log="&outlog." new;
+run;
+
+data g_a_dsin;
+   set datvprot.adae;
+   analysis_subset='Y';
+   where AECAT='ADVERSE EVENT' and VPHASEN in (1, 2) and V01DT >=ASTDT 
+      and (UNBLNDDT=. or UNBLNDDT > ASTDT) and agegr3n ne . and MULENRFL ne "Y" and 
+      HIVFL ne "Y";
+run;
+
+data g_adsl_dsin;
+   set datvprot.adsl;
+   where saffl="Y" and phasen ne 1 and agegr3n ne . and MULENRFL ne "Y" and HIVFL 
+      ne "Y";
+run;
+
+data __trtmap;
+   length trtcode trtdecd $100;
+
+   if 0 then
+      set g_adsl_dsin(keep=TRT01AN);
+   trtval=1;
+
+   if vtype(TRT01AN)='C' then
+      trtcode=tranwrd(compbl(quote("8")), ' ', '" "');
+   else
+      trtcode="8";
+   trtdecd="BNT162b2 (30 (*ESC*){unicode 03BC}g)";
+   trtvar="TRT01AN";
+   trtlbl="TRT01A";
+   output;
+   trtval=2;
+
+   if vtype(TRT01AN)='C' then
+      trtcode=tranwrd(compbl(quote("9")), ' ', '" "');
+   else
+      trtcode="9";
+   trtdecd="Placebo";
+   trtvar="TRT01AN";
+   trtlbl="TRT01A";
+   output;
+   stop;
+run;
+
+data g_adsl_dsin;
+   set g_adsl_dsin;
+
+   if TRT01AN in (8) then
+      do;
+         newtrtn=1;
+         newtrt=coalescec("BNT162b2 (30 (*ESC*){unicode 03BC}g)", TRT01A);
+         output;
+      end;
+
+   if TRT01AN in (9) then
+      do;
+         newtrtn=2;
+         newtrt=coalescec("Placebo", TRT01A);
+         output;
+      end;
+run;
+
+proc sort data=g_adsl_dsin;
+   by usubjid newtrtn;
+run;
+
+data g_a_dsin;
+   set g_a_dsin;
+
+   if TRT01AN in (8) then
+      do;
+         newtrtn=1;
+         newtrt=coalescec("BNT162b2 (30 (*ESC*){unicode 03BC}g)", TRT01A);
+         output;
+      end;
+
+   if TRT01AN in (9) then
+      do;
+         newtrtn=2;
+         newtrt=coalescec("Placebo", TRT01A);
+         output;
+      end;
+run;
+
+proc format;
+   value $_f_ "[1]"="[1]" "[2]"="[2]" "[3]"="[3]" "[4]"="[4]" "[5]"="[5]" 
+      "[6]"="[6]" "[7]"="[7]" "[8]"="[8]" "[9]"="[9]";
+   value $_f1_ "[1]"="[1]" "[2]"="[2]" "[3]"="[3]" "[4]"="[4]" "[5]"="[5]" 
+      "[6]"="[6]" "[7]"="[7]" "[8]"="[8]" "[9]"="[9]";
+run;
+
+quit;
+
+data g_a_dsin1;
+   set g_a_dsin;
+   where ^missing(aeterm);
+
+   if missing(aedecod) then
+      aedecod=aeterm;
+
+   if missing(AEBODSYS) then
+      AEBODSYS='**Uncoded Terms Being Queried';
+
+   if missing(AEDECOD) then
+      AEDECOD='**Uncoded Terms Being Queried';
+   aebodsys=upcase(substr(aebodsys, 1, 1))||strip(upcase(substr(aebodsys, 2, 
+      (length(aebodsys)-1))));
+run;
+
+proc sort data=g_a_dsin1 out=_a_dsin nodupkey;
+   by newtrtn usubjid aedecod astdt ATOXGR;
+run;
+
+proc sort data=_a_dsin;
+   by newtrtn usubjid AEBODSYS AEDECOD;
+run;
+
+data _a_dsin;
+   set _a_dsin;
+   by newtrtn usubjid AEBODSYS AEDECOD;
+
+   if first.usubjid then
+      _anyae=1;
+
+   if aeterm ne '' then
+      _event=1;
+   _uniqid=_n_;
+
+proc sort;
+   by usubjid newtrtn;
+run;
+
+data final;
+   merge g_adsl_dsin(in=d1) _a_dsin(in=d2);
+   by usubjid newtrtn;
+
+   if d1;
+
+   if nmiss(_anyae) then
+      _anyae=0;
+
+   if nmiss(_event) then
+      _event=0;
+
+proc sort;
+   by newtrtn;
+run;
+
+proc sql;
+   create table trtlist as select distinct newtrtn, newtrt from final order by 
+      newtrtn;
+quit;
+
+data trtlist;
+   set trtlist nobs=ntrts;
+
+   if upcase(newtrtn)=2 then
+      _control=1;
+run;
+
+proc sort;
+   by _control newtrtn;
+run;
+
+data trtlist;
+   set trtlist;
+
+   if _control then
+      _trt_id=0;
+   else
+      _trt_id=_n_;
+
+proc sort;
+   by newtrtn;
+run;
+
+data final_t;
+   merge final(in=a) trtlist(in=b);
+   by newtrtn;
+
+   if a;
+run;
+
+data final;
+   set final_t;
+   where _trt_id in (0, 1);
+run;
+
+data _data1;
+   set final;
+   where (NEWTRTN is not missing);
+
+proc sort;
+   by NEWTRTN USUBJID;
+run;
+
+data _data1;
+   retain _trt 0;
+   length _str $200;
+   _datasrt=1;
+   set _data1 end=eof;
+   by NEWTRTN USUBJID;
+   drop _str;
+   _str=' ';
+   _lastby=1;
+   _dummyby=0;
+
+   if first.NEWTRTN then
+      do;
+
+         if not missing(NEWTRTN) then
+            do;
+               _trt=_trt + 1;
+            end;
+         _str=NEWTRT;
+      end;
+
+proc sort;
+   by _datasrt;
+run;
+
+proc sort data=_data1 out=_bydat1(keep=_datasrt _dummyby) nodupkey;
+   by _datasrt;
+run;
+
+data _bydat1;
+   set _bydat1 end=eof;
+   by _datasrt;
+   _byvar1=0;
+   length _bycol _byindnt $50 _bylast $10;
+   _bycol=" ";
+   _byindnt=" ";
+   _bylast=" ";
+run;
+
+proc sort data=_data1 out=bign nodupkey;
+   by _trt usubjid;
+run;
+
+proc summary data=bign nway;
+   class _trt;
+   var _trt;
+   output out=_denom (drop=_freq_ _type_) n=npts;
+run;
+
+proc sort data=_data1;
+   by AEBODSYS AEDECOD;
+run;
+
+proc sort data=_data1 out=dc2 nodupkey;
+   by usubjid _trt AEBODSYS AEDECOD;
+run;
+
+proc summary data=dc2 nway;
+   class _trt AEBODSYS AEDECOD;
+   var _trt;
+   output out=smln2(drop=_type_ _freq_) n=count2;
+run;
+
+proc sort data=smln2;
+   by _trt;
+run;
+
+data final2;
+   merge smln2 _denom;
+   by _trt;
+
+   if count2 > 0 then
+      do;
+         pct=round(((count2/npts)*100), .01);
+      end;
+   else
+      pct=.;
+run;
+
+proc sql;
+   create table seldt2 as select AEBODSYS, AEDECOD  , max(pct) as _maxpct2 from 
+      final2 group by AEBODSYS, AEDECOD;
+quit;
+
+data _data1;
+   merge _data1(in=a) seldt2(in=b);
+   by AEBODSYS AEDECOD;
+run;
+
+data _data1;
+   set _data1;
+   attrib _PCTCOFF format=1. label='Records meeting % cutoff flag';
+
+   if _maxpct2 ge 1.0 then
+      _PCTCOFF=1;
+   else
+      _PCTCOFF=0;
+   _obsnum=_n_;
+run;
+
+proc sort data=_data1 out=_ANYAE_pct_1;
+   by _trt usubjid;
+   where _pctcoff=1;
+run;
+
+proc sort data=_data1 out=_ANYAE_subs_1(keep=_trt usubjid) nodupkey;
+   by _trt usubjid;
+   where _ANYAE>0;
+run;
+
+data _sumdat1;
+   merge _ANYAE_pct_1(in=a drop=_ANYAE) _ANYAE_subs_1(in=b);
+   by _trt usubjid;
+
+   if a and b;
+run;
+
+data _sumdat1;
+   set _sumdat1;
+   by _trt usubjid;
+
+   if first.usubjid then
+      _ANYAE=1;
+   keep _trt usubjid _obsnum _ANYAE;
+
+proc sort;
+   by _obsnum;
+run;
+
+proc sort data=_data1;
+   by _obsnum;
+run;
+
+data _data1;
+   merge _data1(in=a rename=(_ANYAE=__ANYAE)) _sumdat1(keep=_obsnum _ANYAE);
+   by _obsnum;
+   _ANYAE=ifn(_ANYAE=1, 1, 0);
+
+   if a;
+run;
+
+proc sort data=_data1(drop=_obsnum);
+   by _trt usubjid;
+run;
+
+data dsin;
+   set _data1;
+   _cat=1;
+run;
+
+data frame;
+   set _bydat1(keep=);
+   _cat=1;
+   _trt=1;
+   output;
+   _cat=1;
+   _trt=2;
+   output;
+run;
+
+proc sort data=frame;
+   by _cat _trt;
+run;
+
+data _denom1(drop=_col) _temp1;
+   _trt=1;
+   _cat=1;
+   output _denom1;
+   _col=_trt;
+   output _temp1;
+   _trt=2;
+   _cat=1;
+   output _denom1;
+   _col=_trt;
+   output _temp1;
+run;
+
+proc sql;
+   create table denom as select a.*, b.npts as trtn, b.npts as subgrpn from 
+      _denom1 as a left join _denom as b on a._trt=b._trt;
+   create table temp as select a.*, b.npts as trtn, b.npts as subgrpn from _temp1 
+      as a left join _denom as b on a._trt=b._trt;
+quit;
+
+proc sql noprint;
+   create table numin as select a.*, b._col from dsin as a left join temp as b on 
+      a._trt=b._trt;
+quit;
+
+data numin;
+   set numin;
+   where aeterm is not missing and _pctcoff in (1);
+run;
+
+proc sort data=numin out=class1(keep=AEBODSYS) nodupkey;
+   by AEBODSYS;
+run;
+
+data classo1;
+   set frame;
+
+   do i=1 to cobs;
+      set class1 nobs=cobs point=i;
+      output;
+   end;
+run;
+
+proc sort data=numin out=level1 NODUPKEY;
+   by _cat _trt AEBODSYS usubjid;
+run;
+
+proc summary data=level1 nway classdata=classo1 missing;
+   class _cat _trt AEBODSYS;
+   output out=count1(drop=_type_ rename=(_freq_=count));
+run;
+
+data sort1;
+   set class1;
+   AEBODSYS_n=_n_;
+run;
+
+proc sort data=count1;
+   by AEBODSYS;
+run;
+
+proc sort data=sort1 out=sorto1(keep=AEBODSYS AEBODSYS_n);
+   by AEBODSYS;
+run;
+
+data countf1;
+   length _rwlabel $800;
+   merge count1 sorto1;
+   by AEBODSYS;
+   _level=1;
+   _rwlabel=AEBODSYS;
+run;
+
+proc sort data=numin out=class2(keep=AEBODSYS AEDECOD) nodupkey;
+   by AEBODSYS AEDECOD;
+run;
+
+data classo2;
+   set frame;
+
+   do i=1 to cobs;
+      set class2 nobs=cobs point=i;
+      output;
+   end;
+run;
+
+proc sort data=numin out=level2 NODUPKEY;
+   by _cat _trt AEBODSYS AEDECOD usubjid;
+run;
+
+proc summary data=level2 nway classdata=classo2 missing;
+   class _cat _trt AEBODSYS AEDECOD;
+   output out=count2(drop=_type_ rename=(_freq_=count));
+run;
+
+proc sort data=level2 out=flevel2 nodupkey;
+   by AEBODSYS AEDECOD usubjid;
+   where _COL=1;
+run;
+
+proc summary data=flevel2 nway classdata=class2 missing;
+   class AEBODSYS AEDECOD;
+   output out=fcount2(drop=_type_ rename=(_freq_=count));
+run;
+
+proc sort data=fcount2 out=freq2(keep=AEBODSYS AEDECOD count);
+   by descending count AEBODSYS AEDECOD;
+run;
+
+data sort2;
+   set freq2;
+   AEDECOD_n=_n_;
+run;
+
+proc sort data=count2;
+   by AEBODSYS AEDECOD;
+run;
+
+proc sort data=sort2 out=sorto2(keep=AEBODSYS AEDECOD AEDECOD_n);
+   by AEBODSYS AEDECOD;
+run;
+
+data countf2;
+   length _rwlabel $800;
+   merge count2 sorto2;
+   by AEBODSYS AEDECOD;
+   _level=2;
+   _rwlabel=repeat(byte(160), 5)||AEDECOD;
+run;
+
+proc sort data=countf2;
+   by AEBODSYS;
+run;
+
+data countf2;
+   merge countf2 sorto1;
+   by AEBODSYS;
+run;
+
+data alln;
+   set countf1 countf2;
+run;
+
+proc sort data=denom out=denomf(keep=_trt trtn) nodupkey;
+   by _trt;
+run;
+
+proc sort data=alln out=alln;
+   by _trt;
+run;
+
+data final;
+   merge alln(in=a) denomf;
+   by _trt;
+
+   if a;
+   length _cvalue $30;
+
+   if count > . then
+      _cvalue=put(count, 5.);
+   else
+      _cvalue=put(0, 5.);
+
+   if count > 0 and trtn > 0 then
+      do;
+         pct=(count/trtn)*100;
+         _cvalue=trim(_cvalue)||"  ("||strip(put(pct, 5.1))||")";
+      end;
+
+   if length(_cvalue) < 13 then
+      do;
+         substr(_cvalue, 13, 1)='A0'x;
+      end;
+
+proc sort;
+   by _cat _trt AEBODSYS_n AEDECOD_n;
+run;
+
+data _base1;
+   set final;
+   by _cat _trt AEBODSYS_n AEDECOD_n;
+
+   if first._trt then
+      _rowsrt=0;
+   _rowsrt++1;
+   _indent=coalesce(0, 0);
+   _dptindt=coalesce(0, 0);
+   _datasrt=1;
+   _blcksrt=0+ AEBODSYS_n;
+
+proc sort;
+   by _datasrt _blcksrt _rowsrt;
+run;
+
+data _cnp _tmp_cnp;
+   set _base1;
+
+   if count=. then
+      count=0;
+   indc=1;
+   output _cnp;
+   indc=2;
+   count=trtn - count;
+   output _cnp;
+
+   if indc=2 and count=0 then
+      output _tmp_cnp;
+run;
+
+proc sort data=_cnp;
+   by _cat AEBODSYS AEDECOD _rowsrt _rwlabel _trt;
+run;
+
+proc sort nodupkey data=_tmp_cnp(keep=_cat AEBODSYS AEDECOD _rowsrt _rwlabel 
+      _trt);
+   by _cat AEBODSYS AEDECOD _rowsrt _rwlabel _trt;
+run;
+
+proc freq data=_cnp noprint;
+   by _cat AEBODSYS AEDECOD _rowsrt _rwlabel _trt;
+   table indc/binomial alpha=0.05;
+   output out=obsprop binomial;
+   weight count;
+run;
+
+data obsprop;
+   merge obsprop _tmp_cnp(in=a);
+   by _cat AEBODSYS AEDECOD _rowsrt _rwlabel _trt;
+
+   if _bin_=1 and not a then
+      do;
+         xl_bin_=1 - xu_bin;
+         xu_bin_=1 - xl_bin;
+      end;
+   else
+      do;
+         xl_bin_=xl_bin;
+         xu_bin_=xu_bin;
+      end;
+run;
+
+data cnpobsprop2(keep=_cat AEBODSYS AEDECOD _rowsrt _rwlabel _trt cnp_ci);
+   set obsprop;
+   by _cat AEBODSYS AEDECOD _rowsrt _rwlabel _trt;
+   cnp_ci='(' || compress(put(xl_bin_ * 100, 5.1)) 
+      || ',(*ESC*){nbspace 1}' || compress(put(xu_bin_ * 100, 5.1)) || ')';
+   label cnp_ci='95% CI';
+
+proc sort;
+   by _cat AEBODSYS AEDECOD _rowsrt _rwlabel _trt;
+run;
+
+proc sort data=_base1;
+   by _cat AEBODSYS AEDECOD _rowsrt _rwlabel _trt;
+run;
+
+data _base1;
+   merge _base1(in=a) cnpobsprop2;
+   by _cat AEBODSYS AEDECOD _rowsrt _rwlabel _trt;
+
+   if a;
+run;
+
+/*    proc format;  */
+/*    picture pval (round) 0 - < 0.001 = '<.001' (noedit) 0.001 - 0.99 = '00009.999' 0.99 < - high = '>.99' (noedit) -1 = 'N/A' ;  */
+/*    run;  */
+********************************************************************************;
+* SPECIFICATION 2 *;
+* - Assign flag of 1 to all records in input dataset. *;
+* - Output same records with flag of 2 & populate count by substracting *;
+* counts from big N. *;
+********************************************************************************;
+
+data _binom;
+   set _base1;
+
+   if count=. then
+      count=0;
+   YesNo=1;
+   output;
+   YesNo=2;
+   count=trtn - count;
+   output;
+run;
+
+proc sql noprint;
+   create table _binom1 as select a.*, b._trt_id from _binom a left join (select 
+      distinct _trt, _trt_id from _data1) b on a._trt=b._trt;
+quit;
+
+proc sort data=_binom1;
+   by _datasrt _level _rowsrt _trt_id;
+run;
+
+proc binomial noprint data=_binom1 gamma=0.000001 out=mnm_diffprop ti=10 su=1 
+      alpha=0.95;
+   riskdiff / as one STD;
+   by _datasrt _level _rowsrt;
+   po _trt_id;
+   ou yesno;
+   weight count;
+run;
+
+data mnm_stat;
+   set mnm_diffprop;
+   where upcase(test)="PD_AS_ONE_STD" and upcase(item) in ('STAT' 'ASLWRDIF' 
+      'ASUPRDIF' 'ASMPVAL2');
+   keep _datasrt _level _rowsrt item value;
+run;
+
+proc sort data=mnm_stat;
+   by _datasrt _level _rowsrt item;
+run;
+
+proc transpose data=mnm_stat out=trp_mnm_stat (drop=_name_ _label_);
+   by _datasrt _level _rowsrt;
+   var value;
+   id item;
+run;
+
+data mnmdiffprop2(keep=_datasrt _level _rowsrt mnmdiff mnmci mnmpval);
+   set trp_mnm_stat;
+   by _datasrt _level _rowsrt;
+   mnmdiff=strip(put((STAT*100), 8.1));
+
+   if ASLWRDIF ne . and ASUPRDIF ne . then
+      mnmci='('||strip(put((ASLWRDIF*100), 6.1))||', ' ||strip(put((ASUPRDIF*100), 
+         6.1))|| ')';
+   mnmpval=strip(put(ASMPVAL2, PVALUE6.4));
+run;
+
+proc sort data=_base1;
+   by _level _rowsrt;
+run;
+
+proc sort data=mnmdiffprop2;
+   by _level _rowsrt;
+run;
+
+data _base1;
+   merge _base1(in=a) mnmdiffprop2;
+   by _level _rowsrt;
+
+   if a;
+run;
+
+data _base1;
+   set _base1;
+
+   if aedecod=' ' then
+      do;
+         _cvalue=' ';
+         cnp_ci=' ';
+         mnmdiff=' ';
+         mnmci=' ';
+      end;
+
+proc sort;
+   by _rowsrt;
+run;
+
+data _base1c(keep=_datasrt _rowsrt _ctrlval _ctrlci);
+   set _base1;
+   where _trt=2;
+   rename _cvalue=_ctrlval cnp_ci=_ctrlci;
+
+proc sort;
+   by _rowsrt;
+run;
+
+data _base1;
+   merge _base1(in=a where=(_trt^=2)) _base1c;
+   by _rowsrt;
+
+   if a;
+run;
+
+data _stat1;
+   set _base1;
+run;
+
+data _null_;
+   set _denom;
+
+   if _trt=1 then
+      call symput("trtn1", npts);
+
+   if _trt=2 then
+      call symput("trtn2", npts);
+run;
+
+%put &trtn1.;
+%put &trtn2.;
+options nodate nocenter nonumber;
+options topmargin=0.75in bottommargin=0.75in leftmargin=0.75in 
+   rightmargin=0.75in;
+options orientation=LANDSCAPE papersize="LETTER";
+ods escapechar="~";
+option nobyline;
+title1 "Tier 2 Adverse Events Reported From Dose 1 to 1 Month After Dose 2, by System Organ Class and Preferred Term (*ESC*){unicode 2013}";
+title2 "Blinded Placebo-Controlled Follow-up Period (*ESC*){unicode 2013} Phase 2/3 Subjects (*ESC*){Unicode 2265}16 Years of Age (*ESC*){unicode 2013} Safety Population";
+footnote1 "Note: MedDRA (v23.1) coding dictionary applied.";
+footnote2 "Note: Tier 2 events are %nrbquote("common") adverse events with an incidence rate (*ESC*){unicode 2265}1.0% in any vaccine group (preferred term level). No Tier 1 events were identified at this stage for this program.";
+footnote3 "Note: The 95% confidence interval quantifies the precision of the risk difference estimate. Confidence intervals are not adjusted for multiplicity. They should only be used to identify potentially important adverse events.";
+footnote4 "%nrbquote(a.~{nbspace 5}N = number of subjects in the specified group.  This value is the denominator for the percentage calculations. )";
+footnote5 "%nrbquote(b.~{nbspace 5}n = Number of subjects reporting at least 1 occurrence of the specified adverse event.)";
+footnote6 "%nrbquote(c.~{nbspace 5}Exact 2-sided CI based on the Clopper and Pearson method.)";
+footnote7 "%nrbquote(d.~{nbspace 5}Difference in proportions, expressed as a percentage (BNT162b2 [30 (*ESC*){unicode 03BC}g] - placebo).)";
+footnote8 "%nrbquote(e.~{nbspace 5}2-Sided CI, based on the Miettinen and Nurminen method for the difference in proportions, expressed as a percentage.)";
+ods html file="&outtable.";
+
+proc report data=work._stat1 ls=132 ps=60 split="|" nocenter missing 
+      contents="";
+   column (_datasrt _blcksrt _rowsrt (" " _rwlabel) ("Vaccine Group (as Administered)~{line}" (("BNT162b2 (30 (*ESC*){unicode 03BC}g)|(N(*ESC*){super a}=&trtn1.)" (_cvalue 
+      cnp_ci) ) ("Placebo|(N(*ESC*){super a}=&trtn2.)" (_ctrlval _ctrlci) ) ) ) 
+      ("Difference" 
+(mnmdiff mnmci)) );
+   define _datasrt / group order=internal noprint;
+   define _blcksrt / group order=internal noprint;
+   define _rowsrt / group order=internal noprint;
+   define _rwlabel / group "System Organ Class|~{nbspace 5}Preferred Term" 
+      order=data style(column)={just=left} style(header)={just=left} left;
+   define _cvalue / group nozero "n(*ESC*){super b} (%)" 
+      style(column)={leftmargin=12px} style(header)={just=center} center;
+   define cnp_ci / group nozero "(95% CI(*ESC*){super c})" 
+      style(column)={leftmargin=12px} style(header)={just=center} center;
+   define _ctrlval / group nozero "n(*ESC*){super b} (%)" 
+      style(column)={leftmargin=12px} style(header)={just=center} center;
+   define _ctrlci / group nozero "(95% CI(*ESC*){super c})" 
+      style(column)={leftmargin=12px} style(header)={just=center} center;
+   define mnmdiff / group nozero "%(*ESC*){super d}" 
+      style(column)={leftmargin=12px} style(header)={just=center} center;
+   define mnmci / group nozero "(95% CI(*ESC*){super e})" 
+      style(column)={leftmargin=12px} style(header)={just=center} center;
+run;
+
+ods HTML close;
+
+proc printto;
+run;

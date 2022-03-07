@@ -1,0 +1,136 @@
+***********************************************************************************************;
+**  Program Name    :  addv.sas                                                              **;
+**  Date Created    :  09Mar2021                                                             **;
+**  Programmer Name :  XIONGR03                                                              **;
+**  Purpose         :  Create addv dataset                                                   **;
+**  Input data      :  dv suppdv adsl                                                        **;
+**  Output data     :  addv.sas7bdat                                                         **;
+***********************************************************************************************;
+options mprint mlogic symbolgen mprint symbolgen mlogic nocenter missing=" ";
+
+proc datasets library=WORK kill nolist nodetails;
+quit;
+
+**Setup the environment**;
+%let oprot=/Volumes/app/cdars/prod/sites/cdars4/prjC459/nda2_unblinded_esub/bla_euaext_esub_sdtm/saseng/cdisc3_0;
+%let prot=/Volumes/app/cdars/prod/sites/cdars4/prjC459/nda2_unblinded_esub/bla_esub_adam/saseng/cdisc3_0;
+libname dataprot "&oprot./data" access=readonly;
+libname datvprot "&prot./data_vai";
+
+proc printto print="&prot./analysis/esub/output/addv.rpt" 
+        log="&prot./analysis/esub/logs/addv.log" new;
+run;
+
+proc sort data=dataprot.suppdv out=suppdv;
+    by usubjid idvarval qnam;
+run;
+
+proc transpose data=suppdv out=suppdv1(drop=_NAME_ _LABEL_);
+    by usubjid idvarval;
+    var qval;
+    id qnam;
+    idlabel qlabel;
+run;
+
+data suppdv1;
+    set suppdv1;
+    dvseq=input(idvarval, best.);
+run;
+
+proc sort;
+    by usubjid dvseq;
+run;
+
+proc sort data=dataprot.dv out=dv;
+    by usubjid dvseq;
+run;
+
+data _dv1;
+    merge dv suppdv1;
+    by usubjid dvseq;
+
+proc sort;
+    by usubjid;
+run;
+
+proc sort data=datvprot.adsl out=adsl;
+    by usubjid;
+run;
+
+data _dv2;
+    merge _dv1(in=a) adsl(in=b);
+    by usubjid;
+
+    if a;
+run;
+
+data _dv3;
+    set _dv2;
+    format ASTDT date9. aphasdt date9. aphaedt date9.;
+    length aphase $40. aperiodc $20.;
+    label ASTDT='Analysis Start Date' APHASE='Phase' APERIOD='Period' 
+        APERIODC='Period (C)' PREFL='Pre-treatment Flag' TRPFL='On Treatment Flag';
+    p2dt=min(VAX201DT, unblnddt);
+
+    if dvstdtc ne "" then
+        astdt=input(dvstdtc, yymmdd10.);
+
+    if brthdt<=astdt<=(trtsdt-1) then
+        do;
+            aphase='PRE-TREATMENT';
+        end;
+    else if (.<trtsdt<=astdt and p2dt=.) or (p2dt ne . and .<trtsdt<=astdt<p2dt) 
+        then
+            do;
+            aphase='TREATMENT 01';
+        end;
+    else if .<p2dt<=astdt<trtedt+365 then
+        do;
+            aphase='TREATMENT 02';
+        end;
+
+    if (trtsdt ne . and .<astdt and p2dt=.) or (trtsdt ne . and p2dt 
+        ne . and .<astdt<p2dt) then
+            do;
+            aperiod=1;
+            aperiodc='Period 01';
+        end;
+    else if .<p2dt<=astdt<=trtsdt+365 then
+        do;
+            aperiod=2;
+            aperiodc='Period 02';
+        end;
+
+    if astdt<trtsdt then
+        prefl='Y';
+
+    if substr(aphase, 1, 9)='TREATMENT' then
+        TRPFL='Y';
+    else
+        TRPFL='N';
+run;
+
+data final;
+    retain studyid usubjid domain subjid siteid age sex race trtsdt trtedt arm 
+        armcd actarm actarmcd trt01p trt01a trt01pn trt01an agegr1 agegr1n dvseq 
+        dvspid dvterm dvterm1 dvdecod epoch actsite desgtor cape dvcat dvstdtc dvstdy 
+        astdt prefl trpfl randfl phase phasen trtarn trtar trtprn trtpr COHORT 
+        COHORTN DOSALVL DOSALVLN DOSPLVL DOSPLVLN DS3KFL AGEGR3N AGEGR3 AGEGR4N 
+        AGEGR4 HIVFL AGETR01 TRTSDTM TRTEDTM TR01SDTM TR01EDTM TR02SDTM TR02EDTM 
+        VAX101 VAX102 VAX10U VAX201 VAX202 VAX20U VAX20UDT UNBLNDDT MULENRFL RAND1FL;
+    set _dv3;
+    keep studyid usubjid domain subjid siteid age sex race trtsdt trtedt arm armcd 
+        actarm actarmcd trt01p trt01a trt01pn trt01an agegr1 agegr1n dvseq dvspid 
+        dvterm dvterm1 dvdecod epoch actsite desgtor cape dvcat dvstdtc dvstdy astdt 
+        prefl trpfl randfl phase phasen trtarn trtar trtprn trtpr COHORT COHORTN 
+        DOSALVL DOSALVLN DOSPLVL DOSPLVLN DS3KFL AGEGR3N AGEGR3 AGEGR4N AGEGR4 HIVFL 
+        AGETR01 TRTSDTM TRTEDTM TR01SDTM TR01EDTM TR02SDTM TR02EDTM VAX101 VAX102 
+        VAX10U VAX201 VAX202 VAX20U VAX20UDT UNBLNDDT MULENRFL RAND1FL;
+run;
+proc sort data=final 
+        out=datvprot.addv(label='Protocol Deviations Analysis Dataset');
+    by USUBJID ASTDT;
+run;
+
+proc printto;
+run;

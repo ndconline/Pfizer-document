@@ -1,0 +1,556 @@
+***********************************************************************************************;
+**  Program Name    :  adc19ef-ve-cov-7pd2-wo-sg-eval.sas                                     **;
+**  Date Created    :  22Mar2021                                                             **;
+**  Programmer Name :  WUY169                                                                **;
+**  Purpose         :  Create adc19ef-ve-cov-7pd2-wo-sg-eval                                  **;
+**  Input data      :  adc19ef                                                               **;
+**  Output data     :  adc19ef-ve-cov-7pd2-wo-sg-eval.html                                    **;
+***********************************************************************************************;
+options mprint mlogic symbolgen mprint symbolgen mlogic nocenter missing=" ";
+title;
+footnote;
+
+proc datasets library=WORK kill nolist nodetails;
+quit;
+
+%let prot=/Volumes/app/cdars/prod/sites/cdars4/prjC459/nda2_unblinded_esub/bla_esub_adam/saseng/cdisc3_0;
+%let blaprot=/Volumes/app/cdars/prod/sites/cdars4/prjC459/nda2_unblinded_esub/bla_euaext_esub_sdtm/saseng/cdisc3_0;
+libname dataprot "&blaprot./data" access=readonly;
+libname datvprot "&prot./data_vai" access=readonly;
+
+%let codename=adc19ef-ve-cov-7pd2-wo-sg-eval;
+%let outlog=&prot./analysis/esub/logs/&codename..log;
+%let outtable=&prot./analysis/esub/output/&codename..html;
+
+proc printto log="&outlog" new;
+run;
+
+/*** format ***/
+
+proc format;
+value grpfmt
+  0 = "First COVID-19 occurrence from 7 days after Dose 2"
+  1 = "(*ESC*){nbspace 10}"
+  2 = "Overall"
+
+  3 = "(*ESC*){nbspace 10}"
+  4 = "Age group (years)"
+  5 = "(*ESC*){nbspace 4}12 to 15"
+  6 = "(*ESC*){nbspace 4}16 to 55"
+  7 = "(*ESC*){nbspace 4}>55"
+  8 = "(*ESC*){nbspace 4}(*ESC*){unicode 2265}65"
+  9 = "(*ESC*){nbspace 4}16 to 17"
+ 10 = "(*ESC*){nbspace 4}16 to 25"
+ 11 = "(*ESC*){nbspace 4}16 to 64"
+ 12 = "(*ESC*){nbspace 4}18 to 64"
+ 13 = "(*ESC*){nbspace 4}55 to 64"
+ 14 = "(*ESC*){nbspace 4}65 to 74"
+ 15 = "(*ESC*){nbspace 4}(*ESC*){unicode 2265}75"
+ 16 = "(*ESC*){nbspace 4}75 to 85"
+ 17 = "(*ESC*){nbspace 4}>85"
+
+  20 = "(*ESC*){nbspace 10}"
+  21 = "Sex"
+  22 = "(*ESC*){nbspace 4}Male"
+  23 = "(*ESC*){nbspace 4}Female"
+
+ 24 = "(*ESC*){nbspace 10}"
+ 25 = "Race"
+ 26 = "(*ESC*){nbspace 4}White"
+ 27 = "(*ESC*){nbspace 4}Black or African American"
+ 28 = "(*ESC*){nbspace 4}American Indian or Alaska Native"
+ 28.1 = "(*ESC*){nbspace 4}Asian"
+ 28.2 = "(*ESC*){nbspace 4}Native Hawaiian or other Pacific Islander"
+ 28.3 = "(*ESC*){nbspace 4}Multiracial"
+ 28.4 = "(*ESC*){nbspace 4}Not reported"
+ 28.5 = "(*ESC*){nbspace 4}All others(*ESC*){super f}"
+ 
+ 28.6 = "(*ESC*){nbspace 10}"
+ 28.7 = "Racial designation"
+ 28.8 = "(*ESC*){nbspace 4}Japanese"
+
+ 29 = "(*ESC*){nbspace 10}"
+ 30 = "Ethnicity"
+ 31 = "(*ESC*){nbspace 4}Hispanic/Latino"
+ 32 = "(*ESC*){nbspace 4}Non-Hispanic/non-Latino"
+ 33 = "(*ESC*){nbspace 4}Not reported"
+
+ 34 = "(*ESC*){nbspace 10}"
+ 35 = "Country"
+ 36 = "(*ESC*){nbspace 4}Argentina"
+ 37 = "(*ESC*){nbspace 4}Brazil"
+ 37.5 = "(*ESC*){nbspace 4}Germany"
+ 38 = "(*ESC*){nbspace 4}South Africa"
+ 38.5 = "(*ESC*){nbspace 4}Turkey"
+ 39 = "(*ESC*){nbspace 4}USA"
+
+ 40 = "(*ESC*){nbspace 10}"
+ 41 = "Prior SARS-CoV-2 Status"
+ 42 = "(*ESC*){nbspace 4}Positive at baseline(*ESC*){super g}"
+ 42.1 = "(*ESC*){nbspace 8}Positive N-binding only"
+ 42.2 = "(*ESC*){nbspace 8}Positive NAAT only"
+ 42.3 = "(*ESC*){nbspace 8}Positive NAAT and N-binding"
+ 43 = "(*ESC*){nbspace 4}Negative at baseline but positive prior to 7 days after Dose 2(*ESC*){super h}"
+ 44 = "(*ESC*){nbspace 4}Negative prior to 7 days after Dose 2(*ESC*){super i}"
+ 45 = "(*ESC*){nbspace 4}Unknown"
+ ;
+run;
+
+/*** Population Flag **/
+
+proc sql;
+   create table popf as select distinct usubjid, evaleffl, trt01pn, trt01p, NIGV1FL, NAATNFL
+   from datvprot.adsl
+   where evaleffl='Y' and MULENRFL ne "Y" and PHASEN ne 1 and HIVFL = 'N'
+   order by usubjid;
+quit;
+
+proc sql;
+   create table adc19ef as select *
+   from datvprot.adc19ef
+   order by usubjid;
+quit;
+
+***** Derivation for flag needed in last block  - START *******;
+****get Exclusion Criterion 5 from IE dataset****;
+proc sort data= dataprot.ie out= ie (keep= usubjid IESTRESC) nodupkey;
+   by usubjid;
+   where IETESTCD="EX05A05" and  IESTRESC="Y";
+run;
+ 
+***get Positive NAAT at unscheduled visit up-to 7/14 days after Dose2***;
+data naat_un1;
+   set datvprot.adc19ef; 
+   if paramcd="C19ONST" and avalc="POS" and vax101dt ^= . and vax102dt ^= . and vax101dt < adt < sum(vax102dt,7);
+   NAAT_POS_UN="Y";
+   keep usubjid NAAT_POS_UN;
+run;
+
+proc sort; by usubjid; run;
+
+data naat_un2;
+   set datvprot.adc19ef; 
+   if paramcd="NAATRAD" and avalc="POS" and vax101dt ^= . and vax102dt ^= . and vax101dt < adt < sum(vax102dt,7);
+   NAAT_POS_UN="Y";
+   keep usubjid NAAT_POS_UN;
+run;
+
+proc sort; by usubjid; run;
+
+data naat_un3;
+   set datvprot.adc19ef; 
+   if paramcd="RTCOV2NS" and avalc="POS" and vax101dt ^= . and vax102dt ^= . and vax101dt < adt < sum(vax102dt,7);
+   NAAT_POS_UN="Y";
+   keep usubjid NAAT_POS_UN;
+run;
+
+proc sort; by usubjid; run;
+
+data naat_un;
+   merge naat_un1 (in=a) naat_un2 (in=b) naat_un3 (in=c);
+   by usubjid;
+   if a or b or c;
+run;
+
+proc sort nodupkey; by usubjid; run;
+
+data tpop;
+   merge adc19ef (in = a) popf (in = b) naat_un ie;
+   by usubjid;
+   if a*b;
+   if vrblngfl='N' or crd1ngfl='N' or C19ILHFL="Y" or IESTRESC='Y' then do; sero_bl="POS"; ord=1; end;
+   else if PDP27FL='Y' then do; sero_bl="NEG"; ord=3; end; 
+   else if vrblngfl='Y' and crd1ngfl='Y' and (NAAT_POS_UN="Y" or crd2ngfl='N' ) then do; sero_bl="NEU"; ord=2; end;
+   if sero_bl="" then do; sero_bl="UNK"; ord=4; end;
+run;
+
+***** Derivation for flag needed in last block  - END *******;
+
+/***** Total Population ****/
+proc sql;
+   create table dsin as select distinct subjid, trt01pn, trt01p, paramn, paramcd, param, pdrmupfl, adt, dvstdt, NIGV1FL, NAATNFL,
+   aval, avalc, evaleffl, PDP27FL, pdrmufl, ILD27FL, filocrfl, usubjid, PDP214FL, ILD214FL, sero_bl, ord
+   from tpop
+   order by usubjid;
+quit;
+
+proc sql noprint;
+   select bign into :n1 - :n2
+   from (select count(distinct usubjid) as bign, trt01pn
+   from dsin
+   where PDP27FL = "Y"
+   group by trt01pn)
+   order by trt01pn;
+quit;
+
+%let n1 = &n1.;
+%let n2 = &n2.;
+
+%put &n1 &n2.;
+
+/**** Read Subgroup Variables ****/
+
+proc sql;
+   create table adsl as select a.*, b.subjid, b.arace, b.aracen, b.sex, b.agegr1, b.agegr1n, b.racialdn, b.raciald,
+   b.ethnic, b.ethnicn, b.country, b.age, b.agegr2, b.agegr2n, b.agetr01,
+   case when 12 <= b.age <= 15 then 1
+   when 16 <= b.age <= 55 then 3
+   else 4 end as agen
+   from popf a inner join datvprot.adsl b
+   on a.usubjid = b.usubjid
+   order by usubjid;
+quit;
+
+data dsn;
+   merge dsin (in = a) adsl (in = b);
+   by usubjid;
+   if a*b;
+run;
+
+%macro sbgrp (cond = , ord = , out = , grp = );
+
+   data dsin;
+      set dsn;
+      where &cond.;
+   run;
+
+   /*** Subjects at Risk ****/
+   proc sql;
+      create table riskp as select distinct usubjid, trt01pn, trt01p, aval
+      from dsin
+      where pdrmupfl = "N" and PDP27FL = "Y" and paramcd in ("ST27PD") and aval > 0;
+   quit;
+
+   /*** If there are no subjects in a subgroup, populate 0 ****/
+   proc sql noprint;
+      select count(*) into :tobs
+      from riskp;
+   quit;
+
+   %put &tobs.;
+
+   %if &tobs > 0 %then %do;
+
+   data dmny;
+      do trt01pn = 8 to 9;
+         output;
+      end;
+   run;
+
+   proc sql;
+      create table n2 as select count(distinct usubjid) as n2, trt01pn
+      from riskp
+      group by trt01pn
+      order by trt01pn;
+   quit;
+
+   data n2;
+      merge dmny (in = a)n2;
+      by trt01pn;
+      if a;
+      if missing(n2) then n2 = 0;
+   run;
+
+   /***** Events (n1) ****/
+
+   proc sql;
+      create table evnts as select distinct usubjid, param, avalc, trt01pn
+      from dsin
+      where paramcd in ("C19ONST") and upcase(ILD27FL) = "Y" and upcase(FILOCRFL) = "Y" and ((not missing(DVSTDT) and adt <= DVSTDT) or missing(DVSTDT)) and
+      usubjid in (select distinct usubjid from riskp)
+      order by usubjid;
+   quit;
+
+   proc sql;
+      create table evtn as select count(distinct usubjid) as smln, trt01pn
+      from evnts
+      group by trt01pn
+      order by trt01pn;
+   quit;
+
+   data evtn;
+      merge dmny (in = a) evtn;
+      by trt01pn;
+      if a;
+      if missing(smln) then smln = 0;
+   run;
+
+   /*** Surveillance Time ****/
+
+   proc sql;
+      create table st as select distinct usubjid, aval, trt01pn, trt01p, paramcd
+      from dsin
+      where paramcd in ("ST27PD") and
+      usubjid in (select distinct usubjid from riskp);
+   quit;
+
+   proc sql;
+      create table riskn as select a.*, b.ptyrs
+      from n2 a inner join
+      (select (sum(aval)/365.25/1000) as ptyrs, trt01pn
+      from st group by trt01pn) b on a.trt01pn = b.trt01pn;
+   quit;
+
+   data riskn;
+      merge dmny (in = a) riskn;
+      by trt01pn;
+      if a;
+      if missing(ptyrs) then ptyrs = 0;
+      if missing(n2) then n2 = 0;
+   run;
+
+   proc sql;
+      create table &out._pt as select strip(put(a.smln,best.)) as evtn, b.*, smln/ptyrs as ir,
+      a.smln, (put(ptyrs, 7.3) || " (" || strip(put(n2,best.))) || ")" as ptyb
+      from evtn a left join
+      riskn b on a.trt01pn = b.trt01pn;
+   quit;
+
+   /**** Total cases ****/
+   proc sql noprint;
+      select sum(smln) into :ncases
+      from &out._pt;
+   quit;
+
+   %let ncases = &ncases.;
+
+   /***** Cases in Vacination Group ****/
+
+   proc sql noprint;
+      select smln into :nv1-:nv2 from &out._pt;
+   quit;
+
+   %let nv1 = &nv1;
+   %let nv2 = &nv2;
+   %let ncases = &ncases;
+
+   %put No. of Cases in Vacination group are &nv1.;
+   %put Total No. of Cases in the trial are &ncases.;
+
+   proc transpose data = &out._pt out = &out._tr prefix = trt;
+      var ptyrs;
+      id trt01pn;
+   run;
+   %put &nv1 &nv2;
+
+   data &out._tr;
+      set &out._tr;
+      if &nv1 > 0 or &nv2 > 0 then do;
+         r = trt8/trt9;
+         n_p = &ncases - &nv1.;
+         ir_v = &nv1/trt8;
+         ir_p = n_p/trt9;
+         alpha = 0.05;
+         length ve lcl ucl $25.;
+         VE=strip(put( 100*(1-ir_v/ir_p),10.1));
+         fu = finv( 1- alpha/2, 2*(&nv1.+1), 2*N_P);
+         ucl_pi = (&nv1 +1)*fu/(N_P + (&nv1.+1)*fu);
+         fl = finv(1-alpha/2, 2*(N_P+1), 2*&nv1.);
+         if &nv1 = 0 then lcl_pi = 0;
+            else lcl_pi = &nv1./(&nv1. + fl*(N_P+1));
+         ucl_theta = ucl_pi/(r*(1-ucl_pi));
+         lcl_theta = lcl_pi/(r*(1-lcl_pi));
+         qu = 100*(1 - lcl_theta);
+         ql = 100*(1 - ucl_theta);
+         /* vci = "(" || strip(put(ql,8.1)) || ", " || strip(put(qu,8.1)) || ")"; */
+         if not missing(ql) then lcl = strip(put(ql,8.1));
+            else lcl = "-(*ESC*){unicode 221e}";
+         if not missing(qu) then ucl = strip(put(qu,8.1));
+            else ucl = 'NE';
+         vci = "(" || strip(lcl) || ", " || strip(ucl) || ")";   
+      end;
+      else do;
+         ve = "NE";
+         call missing(pr, vci);
+      end;
+      grp = &grp;
+      ord = &ord;
+      *drop ql qh irr qu_:;
+      if missing(ve) /*strip(ve) = '.'*/ then do; ve = "-(*ESC*){unicode 221e}"; vci = "(NA, NA)"; end;
+   run;
+
+   proc transpose data = &out._pt out = trn prefix = trtn;
+      var evtn;
+      id trt01pn;
+   run;
+
+   proc transpose data = &out._pt out = try prefix = trty;
+      var ptyb;
+      id trt01pn;
+   run;
+
+   proc sql;
+      create table f_&out. as select a.*, b.*, c.*
+      from trn (drop = _name_) a,
+      try (drop = _name_) b,
+      &out._tr (drop = _name_) c;
+   quit;
+
+   %end;
+   
+   %else %do;
+
+   data f_&out.;
+      length ve vci trtn8 trtn9 $50 trty8 trty9 $100;
+      grp = &grp;
+      ord = &ord.;
+      ve  = "NE";
+      vci = " ";
+      trtn8 = "0";
+      trtn9 = "0";
+      trty8 = " 0.00 (0)";
+      trty9 = " 0.00 (0)";
+   run;
+
+   %end;
+
+%mend sbgrp;
+
+%sbgrp (cond = %str(), ord = 0, grp = 1, out = fst); **added to display overall count in first row***;
+%sbgrp (cond = %str(), ord = 2, grp = 1, out = ovr);  *** Overall ***;
+
+%sbgrp (cond = %str(12<=agetr01<=15), ord = 5, grp = 2, out = ag4); *** 12 to 15 ***;
+%sbgrp (cond = %str(16<=agetr01<=55), ord = 6, grp = 2, out = ag1); *** 16 to 55 ***;
+%sbgrp (cond = %str(agetr01>55), ord = 7, grp = 2, out = ag2); *** >55 ***;
+%sbgrp (cond = %str(agetr01>=65), ord = 8, grp = 2, out = ag3); *** >=65 ***;
+%sbgrp (cond = %str(16<=agetr01<=17), ord = 9, grp = 2, out = ag5); *** 16 to 17 ***;
+%sbgrp (cond = %str(16<=agetr01<=25), ord = 10, grp = 2, out = ag6); *** 16 to 25 ***;
+%sbgrp (cond = %str(16<=agetr01<=64), ord = 11, grp = 2, out = ag11); *** 16 to 64 ***;
+%sbgrp (cond = %str(18<=agetr01<=64), ord = 12, grp = 2, out = ag7); *** 18 to 64 ***;
+%sbgrp (cond = %str(55<=agetr01<=64), ord = 13, grp = 2, out = ag10); *** 55 to 64 ***;
+%sbgrp (cond = %str(65<=agetr01<=74), ord = 14, grp = 2, out = ag8); *** 65 to 74 ***;
+%sbgrp (cond = %str(agetr01>=75), ord = 15, grp = 2, out = ag9); *** >=75 ***;
+%sbgrp (cond = %str(75<=agetr01<=85), ord = 16, grp = 2, out = ag12); *** 75 to 85 ***;
+%sbgrp (cond = %str(agetr01>85), ord = 17, grp = 2, out = ag13); *** >85 ***;
+
+%sbgrp (cond = %str(sex in ('M')), ord = 22, grp = 3, out = sx1); *** Male ***;
+%sbgrp (cond = %str(sex in ('F')), ord = 23, grp = 3, out = sx2); *** Female ***;
+
+%sbgrp (cond = %str(aracen in (1)), ord = 26, grp = 4, out = rc1); *** White ***;
+%sbgrp (cond = %str(aracen in (2)), ord = 27, grp = 4, out = rc2); *** Black or Afri Amer ***;
+%sbgrp (cond = %str(aracen in (3)), ord = 28, grp = 4, out = rc3); *** American ***;
+%sbgrp (cond = %str(aracen in (4)), ord = 28.1, grp = 4, out = rc4); *** Asian ***;
+%sbgrp (cond = %str(aracen in (5)), ord = 28.2, grp = 4, out = rc5); *** Hawaii ***;
+%sbgrp (cond = %str(aracen in (6)), ord = 28.3, grp = 4, out = rc6); *** Multi ***;
+%sbgrp (cond = %str(aracen in (7)), ord = 28.4, grp = 4, out = rc7); *** Not reported ***;
+%sbgrp (cond = %str(aracen not in (1,2)), ord = 28.5, grp = 4, out = rc8); *** All Others ***;
+
+%sbgrp (cond = %str(aracen in (4) and racialdn in (5)), ord = 28.8, grp = 5, out = jp1); *** Japanese ***;
+
+%sbgrp (cond = %str(ethnicn in (1)), ord = 31, grp = 6, out = et1); ***  Hispanic/Latino ***;
+%sbgrp (cond = %str(ethnicn in (2)), ord = 32, grp = 6, out = et2); *** Non-Hispanic/non-Latino ***;
+%sbgrp (cond = %str(ethnicn in (3)), ord = 33, grp = 6, out = et3); *** Not reported ***;
+
+%sbgrp (cond = %str(country in ("ARG")), ord = 36, grp = 7, out = ct1); *** Argentina ***;
+%sbgrp (cond = %str(country in ("BRA")), ord = 37, grp = 7, out = ct2); *** Brazil ***;
+%sbgrp (cond = %str(country in ("DEU")), ord = 37.5, grp = 7, out = ct3); *** Germany ***;
+%sbgrp (cond = %str(country in ("ZAF")), ord = 38, grp = 7, out = ct4); *** South Africa ***;
+%sbgrp (cond = %str(country in ("TUR")), ord = 38.5, grp = 7, out = ct5); *** Turkey ***;
+%sbgrp (cond = %str(country in ("USA")), ord = 39, grp = 7, out = ct6); *** USA ***;
+
+%sbgrp (cond = %str(sero_bl in ("POS")), ord = 42, grp = 8, out = sr1); *** Positive at baseline ***;
+%sbgrp (cond = %str(sero_bl in ("POS") and (NIGV1FL = "N" and NAATNFL ne "N")), ord = 42.1, grp = 8, out = sr11); *** Positive N-binding only ***;
+%sbgrp (cond = %str(sero_bl in ("POS") and (NIGV1FL ne "N" and NAATNFL = "N")), ord = 42.2, grp = 8, out = sr12); *** Positive NAAT only ***;
+%sbgrp (cond = %str(sero_bl in ("POS") and (NIGV1FL = "N" and NAATNFL = "N")), ord = 42.3, grp = 8, out = sr13); *** Positive NAAT and N-binding ***;
+%sbgrp (cond = %str(sero_bl in ("NEU")), ord = 43, grp = 8, out = sr2); *** Negative at baseline but positive prior to 7 days after Dose 2 ***;
+%sbgrp (cond = %str(sero_bl in ("NEG")), ord = 44, grp = 8, out = sr3); *** Negative prior to 7 days after Dose ***;
+%sbgrp (cond = %str(sero_bl in ("UNK")), ord = 45, grp = 8, out = sr4); *** Unknown ***;
+
+data final;
+   length vci $100. trtn8 trtn9 $50.;
+   set f_:;
+run;
+
+proc sort data = final;
+   by ord grp ;
+run;
+
+data dummy;
+   do ord = 0 to 45;
+      output;
+   end;
+run;
+
+data dummy1; 
+   ord = 28.1; output;
+   ord = 28.2; output;
+   ord = 28.3; output;
+   ord = 28.4; output;
+   ord = 28.5; output;
+   ord = 28.6; output;
+   ord = 28.7; output;
+   ord = 28.8; output;
+   ord = 37.5; output; 
+   ord = 38.5; output; 
+   ord = 42.1; output; 
+   ord = 42.2; output; 
+   ord = 42.3; output; 
+run;
+
+data dummy;
+   set dummy dummy1;
+   if 0<=ord<=2 then grp = 1;
+   if 3<=ord<=17 then grp = 2;
+   if 20<=ord<=23 then grp = 3;
+   if 24<=ord<=28.5 then grp = 4;
+   if 28.6<=ord<=28.8 then grp = 5;
+   if 29<=ord<=33 then grp = 6;
+   if 34<=ord<=39 then grp = 7;
+   if 40<=ord<=45 then grp = 8;
+run;
+
+proc sort;
+   by ord grp;
+run;
+
+proc sql noprint;
+   select trtn8 into :jn8 from final where ord = 28.8;
+   select trtn9 into :jn9 from final where ord = 28.8;
+quit;
+
+data rf;
+   merge dummy (in = a) final;
+   by ord grp;
+   if a;
+   text = put(ord,grpfmt.);
+   if strip(trtn8) = '0' and strip(trtn9) = '0' then delete;
+   if grp in (8) then delete;
+   if grp in (5) then delete;
+   if ord in (18,19) then delete;
+   if ord = 0 then do; 
+      trtn8 = ''; trty8 = ''; trtn9 = ''; trty9 = ''; ve = ''; vci = '';
+   end;
+run;     
+
+********* Set up Report *******;
+ods escapechar="~";
+
+ods html file="&outtable."; 
+
+title1 "Vaccine Efficacy (*ESC*){unicode 2013} First COVID-19 Occurrence From 7 Days After Dose 2, by Subgroup";
+title2 "(*ESC*){unicode 2013} Blinded Placebo-Controlled Follow-up Period";
+title3 "(*ESC*){unicode 2013} Subjects Without Evidence of Infection Prior to 7 Days After Dose 2 (*ESC*){unicode 2013} Evaluable Efficacy (7 Days) Population";
+footnote1 "Abbreviations: N-binding = SARS-CoV-2 nucleoprotein(*ESC*){unicode 2013}binding; NAAT = nucleic acid amplification test; ~nSARS-CoV-2 = severe acute respiratory syndrome coronavirus 2; VE = vaccine efficacy.";
+footnote2 "Note: Subjects who had no serological or virological evidence (prior to 7 days after receipt of the last dose) of past SARS-CoV-2 infection (ie, N-binding antibody [serum] negative at Visit 1 and SARS-CoV-2 not detected by NAAT [nasal swab] at Visits 1 and 2), and had negative NAAT (nasal swab) at any unscheduled visit prior to 7 days after Dose 2 were included in the analysis.";
+footnote3 "a.(*ESC*){nbspace 5}N = number of subjects in the specified group. ~nb.(*ESC*){nbspace 5}n1 = Number of subjects meeting the endpoint definition.";
+footnote4 "c.(*ESC*){nbspace 5}Total surveillance time in 1000 person-years for the given endpoint across all subjects within each group at risk for the endpoint. Time period for COVID-19 case accrual is from 7 days after Dose 2 to the end of the surveillance period.";
+footnote5 "d.(*ESC*){nbspace 5}n2 = Number of subjects at risk for the endpoint. ~ne.(*ESC*){nbspace 5}Confidence interval (CI) for VE is derived based on  the Clopper and Pearson method adjusted for surveillance time. ~nf.(*ESC*){nbspace 5}All others = American Indian or Alaska native, Asian, Native Hawaiian or other Pacific Islander, multiracial, and not reported race categories.";
+;
+
+proc report data = rf nowd headline headskip split = "*" style(report)=[];
+   column grp ord (text ("Vaccine Group (as Randomized)~{line}" ("BNT162b2 (30 ~{unicode 03BC}g)*(N~{super a}=&n1.)" trtn8 trty8) ("Placebo*(N~{super a}=&n2.)" trtn9 trty9)) ve vci);
+   define ord / display noprint;
+   define grp / display noprint;
+   define text / "Efficacy Endpoint*~{nbspace 5}Subgroup" flow style(header)=[just=l] style(column)=[cellwidth=3in just=l];
+   define trtn8 / " n1~{super b}" style(column)=[cellwidth=0.8in just=c];
+   define trty8 / "Surveillance*Time~{super c} (n2~{super d})" style(column)=[cellwidth=1.5in just=c];
+   define trtn9 / " n1~{super b}" style(column)=[cellwidth=0.8in just=c];
+   define trty9 / "Surveillance*Time~{super c} (n2~{super d})" style(column)=[cellwidth=1.5in just=c];
+   define ve / "  VE (%)" style(column)=[cellwidth=0.5in just=c];
+   define vci / "(95% CI~{super e})" style(column)=[cellwidth=0.5in just=c];
+run;
+
+ods HTML close;
+
+proc printto;
+run;

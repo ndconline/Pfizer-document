@@ -1,0 +1,406 @@
+***********************************************************************************************;
+**  Program Name    :  adc19ef-ve-sev-cov-pd1-aai.sas                                        **;
+**  Date Created    :  22Mar2021                                                             **;
+**  Programmer Name :  WUY169                                                                **;
+**  Purpose         :  Create adc19ef-ve-sev-cov-pd1-aai                                     **;
+**  Input data      :  adc19ef                                                               **;
+**  Output data     :  adc19ef-ve-sev-cov-pd1-aai.html                                       **;
+***********************************************************************************************;
+options mprint mlogic symbolgen mprint symbolgen mlogic nocenter missing=" ";
+title;
+footnote;
+
+proc datasets library=WORK kill nolist nodetails;
+quit;
+
+%let prot=/Volumes/app/cdars/prod/sites/cdars4/prjC459/nda2_unblinded_esub/bla_esub_adam/saseng/cdisc3_0;
+libname datvprot "&prot./data_vai" access=readonly;
+%let codename=adc19ef-ve-sev-cov-pd1-aai;
+%let outlog=&prot./analysis/esub/logs/&codename..log;
+%let outtable=&prot./analysis/esub/output/&codename..html;
+
+proc printto log="&outlog" new;
+run;
+
+/*** format ***/
+proc format;
+   picture perc1b (round) 0.0='  ' 0.0<-<0.1='(<0.1)'  (noedit) 
+      0.1-99.9='0009.9)' (prefix='(') 100='(100.0)' (noedit);
+   value ord 1="First severe COVID-19 occurrence after Dose 1" 
+      2="(*ESC*){nbspace 3}After Dose 1 to before Dose 2" 
+      3="(*ESC*){nbspace 3}Dose 2 to 7 days after Dose 2" 
+      4="(*ESC*){nbspace 3}(*ESC*){unicode 2265}7 Days after Dose 2";
+run;
+
+/*** Population Flag **/
+proc sql;
+   create table popf as select distinct usubjid, evaleffl, trt01pn, trt01p, 
+      aai2effl from datvprot.adsl where AAI1EFFL='Y' and MULENRFL ne "Y" and PHASEN 
+      ne 1 and HIVFL='N' order by usubjid;
+quit;
+
+proc sql;
+   create table adc19ef as select * from datvprot.adc19ef order by usubjid;
+quit;
+
+data tpop;
+   merge adc19ef (in=a) popf (in=b);
+   by usubjid;
+
+   if a*b;
+run;
+
+/***** Total Population ****/
+proc sql;
+   create table dsin as select distinct subjid, trt01pn, trt01p, paramn, paramcd, 
+      param, adt, vax101dt, vax102dt, pdrmupfl, aval, avalc, evaleffl, PDP1FL, 
+      PDP27FL, pdrmufl, ILD1FL, ILD27FL, filocrfl, usubjid, aai2effl, PDP214FL, 
+      ILD214FL, CDCRMUFL, CDRMUPFL from tpop;
+quit;
+
+proc sort data=dsin out=case_pos (keep=adt usubjid rename=adt=adt_s) nodupkey;
+   by usubjid adt;
+   where upcase(paramcd)="SEVCONST" and find(avalc, 'POS' , 'i') and 
+      ADT >=VAX101DT and upcase(FILOCRFL)="Y";
+run;
+
+data dsin;
+   merge dsin (in=a) case_pos (in=b);
+   by usubjid;
+
+   if a and b then
+      do;
+
+         if (not missing(vax102dt) and not missing(vax101dt) and 
+            vax101dt <=adt_s < vax102dt) or 
+  (missing(vax102dt) and not missing(vax101dt) and vax101dt <=adt_s) then
+               do;
+               flgn=1;
+               flg='PD1BD2';
+            end;
+         else if not missing(vax102dt) and vax102dt <=adt_s < vax102dt + 7 then
+            do;
+               flgn=2;
+               flg='PD2';
+            end;
+         else if not missing(vax102dt) and adt_s >=vax102dt + 7 then
+            do;
+               flgn=3;
+               flg='PD1A7';
+            end;
+      end;
+   else if a and not b then
+      do;
+         flgn=4;
+         flg='RISK';
+      end;
+run;
+
+proc sql noprint;
+   select bign into :n1 - :n2 from (select count(distinct usubjid) as bign, 
+      trt01pn from dsin group by trt01pn) order by trt01pn;
+quit;
+
+%let n1 = &n1.;
+%let n2 = &n2.;
+%put &n1 &n2.;
+
+%macro sbgrp (cond=, ord=, out=, grp=, st1=, st2=);
+   /*** Subjects at Risk ****/
+   proc sql;
+      create table riskp as select distinct usubjid, trt01pn, trt01p, aval from 
+         dsin where PDRMUPFL="N" and paramcd in ("ST1SEA") and aval > 0 and &st1.;
+   quit;
+
+   /*** If there are no subjects in a subgroup, populate 0 ****/
+   proc sql noprint;
+      select count(*) into :tobs from riskp;
+   quit;
+
+   %put &tobs.;
+
+   %if &tobs > 0 %then
+      %do;
+
+         data dmny;
+            do trt01pn=8 to 9;
+               output;
+            end;
+         run;
+
+         proc sql;
+            create table n2 as select count(distinct usubjid) as n2, trt01pn from riskp 
+               group by trt01pn order by trt01pn;
+         quit;
+
+         data n2;
+            merge dmny (in=a)n2;
+            by trt01pn;
+
+            if a;
+
+            if missing(n2) then
+               n2=0;
+         run;
+
+         /***** Events (n1) ****/
+         proc sql;
+            create table evnts as select distinct usubjid, param, avalc, trt01pn from 
+               dsin where paramcd in ("SEVCONST") and find(avalc, 'POS' , 'i') and 
+               ADT >=VAX101DT and &st2. and usubjid in (select distinct usubjid from 
+               riskp) order by usubjid;
+         quit;
+
+         proc sql;
+            create table evtn as select count(distinct usubjid) as smln, trt01pn from 
+               evnts group by trt01pn order by trt01pn;
+         quit;
+
+         data evtn;
+            merge dmny (in=a) evtn;
+            by trt01pn;
+
+            if a;
+
+            if missing(smln) then
+               smln=0;
+         run;
+
+         /*** Surveillance Time ****/
+         proc sql;
+            create table st as select distinct usubjid, aval, trt01pn, trt01p, paramcd 
+               from dsin where paramcd in ("ST1SEA") and usubjid in (select distinct 
+               usubjid from riskp);
+         quit;
+
+         proc sql;
+            create table riskn as select a.*, b.ptyrs from n2 a inner join
+(select (sum(aval)/365.25/1000) as ptyrs, trt01pn from st group by trt01pn) b 
+               on a.trt01pn=b.trt01pn;
+         quit;
+
+         data riskn;
+            merge dmny (in=a) riskn;
+            by trt01pn;
+
+            if a;
+
+            if missing(ptyrs) then
+               ptyrs=0;
+
+            if missing(n2) then
+               n2=0;
+         run;
+
+         proc sql;
+            create table &out._pt as select strip(put(a.smln, best.)) as evtn, b.*, 
+               smln/ptyrs as ir, a.smln, (put(ptyrs, 7.3) || " (" || strip(put(n2, 
+               best.))) || ")" as ptyb from evtn a left join riskn b on 
+               a.trt01pn=b.trt01pn;
+         quit;
+
+         /**** Total cases ****/
+         proc sql noprint;
+            select sum(smln) into :ncases from &out._pt;
+         quit;
+
+         %let ncases = &ncases.;
+
+         /***** Cases in Vacination Group ****/
+         proc sql noprint;
+            select smln into :nv1-:nv2 from &out._pt;
+         quit;
+
+         %let nv1 = &nv1;
+         %let nv2 = &nv2;
+         %let ncases = &ncases;
+         %put No. of Cases in Vacination group are &nv1.;
+         %put Total No. of Cases in the trial are &ncases.;
+
+         proc transpose data=&out._pt out=&out._tr prefix=trt;
+            var ptyrs;
+            id trt01pn;
+         run;
+
+         %put &nv1 &nv2;
+
+         data &out._tr;
+            set &out._tr;
+
+            %if &ord. > 1 %then
+               %do;
+                  trt8=1;
+                  trt9=1;
+               %end;
+
+            if &nv1 > 0 or &nv2 > 0 then
+               do;
+                  r=trt8/trt9;
+                  n_p=&ncases - &nv1.;
+                  ir_v=&nv1/trt8;
+                  ir_p=n_p/trt9;
+                  alpha=0.05;
+                  length ve lcl ucl $25.;
+                  VE=strip(put(100*(1-ir_v/ir_p), 10.1));
+                  fu=finv(1- alpha/2, 2*(&nv1.+1), 2*N_P);
+                  ucl_pi=(&nv1 +1)*fu/(N_P + (&nv1.+1)*fu);
+                  fl=finv(1-alpha/2, 2*(N_P+1), 2*&nv1.);
+
+                  if &nv1=0 then
+                     lcl_pi=0;
+                  else
+                     lcl_pi=&nv1./(&nv1. + fl*(N_P+1));
+                  ucl_theta=ucl_pi/(r*(1-ucl_pi));
+                  lcl_theta=lcl_pi/(r*(1-lcl_pi));
+                  qu=100*(1 - lcl_theta);
+                  ql=100*(1 - ucl_theta);
+
+                  if not missing(ql) then
+                     lcl=strip(put(ql, 8.1));
+                  else
+                     lcl="-(*ESC*){unicode 221e}";
+
+                  if not missing(qu) then
+                     ucl=strip(put(qu, 8.1));
+                  else
+                     ucl='NE';
+                  vci="(" || strip(lcl) || ", " || strip(ucl) || ")";
+               end;
+            else
+               do;
+                  ve="NE";
+                  call missing(pr, vci);
+               end;
+            grp=&grp;
+            ord=&ord;
+
+            if strip(ve)='.' then
+               do;
+                  ve="-(*ESC*){unicode 221e}";
+                  vci="(NA, NA)";
+               end;
+         run;
+
+         proc transpose data=&out._pt out=trn prefix=trtn;
+            var evtn;
+            id trt01pn;
+         run;
+
+         proc transpose data=&out._pt out=try prefix=trty;
+            var ptyb;
+            id trt01pn;
+         run;
+
+         proc sql;
+            create table f_&out. as select a.*, b.*, c.* from trn (drop=_name_) a, 
+               try (drop=_name_) b, &out._tr (drop=_name_) c;
+         quit;
+
+      %end;
+   %else
+      %do;
+
+         data f_&out.;
+            length ve vci trtn8 trtn9 $50 trty8 trty9 $100;
+            grp=&grp;
+            ord=&ord.;
+            ve="NE";
+            vci=" ";
+            trtn8="0";
+            trtn9="0";
+            trty8=" 0.00 (0)";
+            trty9=" 0.00 (0)";
+         run;
+
+      %end;
+%mend sbgrp;
+
+%sbgrp (cond=%str(), ord=1, grp=1, out=ovr, st1=flgn in (1, 2, 3, 4), st2=flgn 
+   in (1, 2, 3, 4));
+*** Overall ***;
+%sbgrp (cond=%str(), ord=2, grp=1, out=pd1, st1=flgn in (1, 2, 3, 4), st2=flgn 
+   in (1));
+*** After Dose 1 to Dose 2 ***;
+%sbgrp (cond=%str(), ord=3, grp=1, out=pd2, st1=flgn in (2, 3, 4), st2=flgn 
+   in (2));
+*** Dose 2 to 7 days Post Dose 2 ***;
+%sbgrp (cond=%str(), ord=4, grp=1, out=pd27, st1=flgn in (3, 4), st2=flgn 
+   in (3));
+*** After 7 days Post Dose 2 ***;
+
+data final;
+   length vci $100. trtn8 trtn9 $50.;
+   set f_:;
+run;
+
+proc sort data=final;
+   by ord grp;
+run;
+
+data dummy;
+   do ord=1 to 4;
+      output;
+   end;
+run;
+
+data dummy;
+   set dummy;
+   grp=1;
+run;
+
+proc sort;
+   by ord grp;
+run;
+
+data rf;
+   merge dummy (in=a) final;
+   by ord grp;
+
+   if a;
+   text=put(ord, ord.);
+
+   if strip(trtn8)='0' and strip(trtn9)='0' then
+      delete;
+
+   if ord > 1 then
+      do;
+         trty8="";
+         trty9="";
+      end;
+run;
+
+********* Set up Report *******;
+ods escapechar="~";
+
+/* ods html file="&outtable.";  */
+title1 "Vaccine Efficacy (*ESC*){unicode 2013} First Severe COVID-19 Occurrence After Dose 1 (*ESC*){unicode 2013} Blinded Placebo-Controlled Follow-up Period";
+title2 "(*ESC*){unicode 2013} Dose 1 All-Available Efficacy Population";
+footnote1 "Abbreviation: VE = vaccine efficacy.";
+footnote2 "a.(*ESC*){nbspace 5}N = number of subjects in the specified group.";
+footnote3 "b.(*ESC*){nbspace 5}n1 = Number of subjects meeting the endpoint definition.";
+footnote4 "c.(*ESC*){nbspace 5}Total surveillance time in 1000 person-years for the given endpoint across all subjects within each group at risk for the endpoint. Time period for COVID-19 case accrual is from Dose 1 to the end of the surveillance period.";
+footnote5 "d.(*ESC*){nbspace 5}n2 = Number of subjects at risk for the endpoint.";
+footnote6 "e.(*ESC*){nbspace 5}Confidence interval (CI) for VE is derived based on the Clopper and Pearson method (adjusted for surveillance time for overall row).";
+;
+
+proc report data=rf nowd headline headskip split="*" style(report)=[];
+   column grp ord (text ("Vaccine Group (as Randomized)~{line}" ("BNT162b2 (30 ~{unicode 03BC}g)*(N~{super a}=&n1.)" 
+      trtn8 trty8) ("Placebo*(N~{super a}=&n2.)" trtn9 trty9)) ve vci);
+   define ord / order noprint;
+   define grp / order noprint;
+   define text / "Efficacy Endpoint*~{nbspace 5}Subgroup" flow 
+      style(header)=[just=l] style(column)=[cellwidth=3in just=l];
+   define trtn8 / " n1~{super b}" style(column)=[cellwidth=0.8in just=c];
+   define trty8 / "Surveillance*Time~{super c} (n2~{super d})" 
+      style(column)=[cellwidth=1.5in just=c];
+   define trtn9 / " n1~{super b}" style(column)=[cellwidth=0.8in just=c];
+   define trty9 / "Surveillance*Time~{super c} (n2~{super d})" 
+      style(column)=[cellwidth=1.5in just=c];
+   define ve / "  VE (%)" style(column)=[cellwidth=0.5in just=c];
+   define vci / "(95% CI~{super e})" style(column)=[cellwidth=0.5in just=c];
+run;
+
+ods HTML close;
+
+proc printto;
+run;
